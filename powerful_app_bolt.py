@@ -1,5 +1,4 @@
 import os
-import re
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -8,10 +7,6 @@ from langchain_openai import AzureChatOpenAI
 # Initializes your app with your bot token and socket mode handler
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
-@app.message("hello")
-def message_hello(message, say):
-    say(f"Hey there <@{message['user']}>!")
-
 @app.event("message")
 def handle_message_events(body, logger):
     logger.info
@@ -19,7 +14,10 @@ def handle_message_events(body, logger):
 @app.event("app_mention")
 def event_test(event, say):
     message_text = event["text"]
-    say ({"text": "Thank you for your query. I will now go and retrieve your answer, this can take up to x amount of time."})
+    global thread_id 
+    thread_id = event.get("ts")
+    say ({"text": "Thank you for your query. I will now go and retrieve your answer, this can take up to 30 seconds to complete. If your answer is not provided in this time, please raise a support request using the following link: https://www.servicenow.com/uk/",
+          "thread_ts": thread_id})
 
     # Adding in call to openAI. This code could be moved a bit higher? 
     model = AzureChatOpenAI(
@@ -35,16 +33,17 @@ def event_test(event, say):
     )
     message_text = ((model([system_message, message])).content)
 
-    say({'text': "Hi there! This is the OpenAI answer I found in response to your question:\n\n" + message_text + '\n\n I am however just a bot. If your question was not answered satisfactorily, please select the relevant box.'})
+    say({'text': "Hi there! This is the OpenAI answer I found in response to your question:\n\n" + message_text + '\n\n I am however just a bot. If your question was not answered satisfactorily, please select the relevant box.',
+         "thread_ts": thread_id})
         # Send a message with buttons asking for feedback
     say(
-            {
+            {"thread_ts": thread_id,
                 "blocks": [
                     {
                         "type": "section",
                         "text": {
                             "type": "mrkdwn",
-                            "text": "Please select an option for how satisfied with the provided answer:",
+                            "text": "Please select an option for how satisfied you are with the provided answer:",
                         },
                     },
                     {
@@ -54,25 +53,30 @@ def event_test(event, say):
                                 "type": "button",
                                 "text": {"type": "plain_text", "text": "This has resolved my query"},
                                 "value": "yes",
+                                'action_id': 'resolved_button',
+                                # "thread_ts": thread_id
                             },
                             {
                                 "type": "button",
                                 "text": {"type": "plain_text", "text": "This has not resolved my query"},
                                 "value": "no",
+                                'action_id': 'unresolved_button',
+                                # "thread_ts": thread_id
                             },
                         ],
                     },
                 ]
-            }
+            }, 
+            
         )
 
 
 # Handle button clicks
 
-@app.action("lM8iX")
-def handle_some_action(ack, body, client, logger):
+@app.action("unresolved_button")
+def handle_negative_action(ack, body, client, logger):
     ack()
-    url = 'https://yourethemannowdog.ytmnd.com/'
+    url = 'https://www.servicenow.com/uk/'
         # Ask for feedback
     client.views_open(
         trigger_id = body['trigger_id'],
@@ -105,13 +109,10 @@ def handle_some_action(ack, body, client, logger):
     )
     logger.info(body)    
 
-@app.action("QaGUi")
-def handle_some_action(ack, body, client, logger):
+@app.action("resolved_button")
+def handle_positive_action(ack, body, say, logger):
     ack()
-    client.chat_postMessage(
-        channel = body['container']['channel_id'],
-        text = 'Thank you for using the powerful app service! If you have any further feedback on this service, please leave it as a reply to this thread. Our team will review all feedback to improve the service.'
-    )
+    say({"thread_ts": thread_id, 'text':'Thank you for using the powerful app service! If you have any further feedback on this service, please leave it as a reply to this thread. Our team will review all feedback to improve the service.'})
     logger.info(body)    
 
 if __name__ == "__main__":
