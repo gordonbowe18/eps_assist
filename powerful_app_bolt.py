@@ -1,10 +1,19 @@
 import os
+from azure.keyvault.secrets import SecretClient
+from azure.identity import DefaultAzureCredential
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import AzureChatOpenAI
 
 # Initializes your app with your bot token and socket mode handler
+keyVaultName = 'powerfulappkeyvault'
+KVUri = f"https://{keyVaultName}.vault.azure.net"
+
+credential = DefaultAzureCredential()
+client = SecretClient(vault_url=KVUri, credential=credential)
+powerfulappappsecret = client.get_secret('powerfulappappsecret')
+powerfulappbotsecret = client.get_secret('powerfulappbotsecret')
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 @app.event("message")
