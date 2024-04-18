@@ -13,8 +13,12 @@ KVUri = f"https://{keyVaultName}.vault.azure.net"
 credential = DefaultAzureCredential()
 client = SecretClient(vault_url=KVUri, credential=credential)
 powerfulappappsecret = client.get_secret('powerfulappappsecret')
+powerfulappappsecret = powerfulappappsecret.value
+
 powerfulappbotsecret = client.get_secret('powerfulappbotsecret')
-app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
+powerfulappbotsecret = powerfulappbotsecret.value
+
+app = App(token=powerfulappbotsecret)
 
 @app.event("message")
 def handle_message_events(body, logger):
@@ -23,26 +27,28 @@ def handle_message_events(body, logger):
 @app.event("app_mention")
 def event_test(event, say):
     message_text = event["text"]
+    # At the moment, I'm having to call this as a global variable. This needs changing for the 'handle_positive_action' function, I have so far been unable to pass the thread_id to respond on any other way, and cannot find a thread_id in the Ack object that triggers the positive action.
     global thread_id 
     thread_id = event.get("ts")
-    say ({"text": "Thank you for your query. I will now go and retrieve your answer, this can take up to 30 seconds to complete. If your answer is not provided in this time, please raise a support request using the following link: https://www.servicenow.com/uk/",
+    # Change to the relevant way we want to handle failed calls. 
+    awaiting_text = "Thank you for your query. I will now go and retrieve your answer, this can take up to 3 minutes to complete. If your answer is not provided in this time, please raise a support request using the following link: https://www.servicenow.com/uk/"
+    say ({"text": awaiting_text,
           "thread_ts": thread_id})
 
-    # Adding in call to openAI. This code could be moved a bit higher? 
+    # Call to openAI. Will need to be updated once the deployed model is available, as it currently facing a generic openAI conversation
+    # TODO: Add in ConversationChain library to maintain context/ask further Qs. Will need an if else loop looking at the thread_id, again will need to extract thread_id somehow, may add in buttons to continue the conversation, then to go to feedback.
     model = AzureChatOpenAI(
         openai_api_version="2023-08-01-preview",
         azure_deployment="eps-assistant-model",
         azure_endpoint = 'https://openapi-platforms-epsassist-poc-instance-uksouth.openai.azure.com/'
     )
-    system_message = SystemMessage(
-        content="helpful AI assistant, you say 'yo' after a request"
-    )
     message = HumanMessage(
         content=message_text
     )
-    message_text = ((model([system_message, message])).content)
+    ai_answer = ((model([message])).content)
+    answer_text = f"Hi there! This is the OpenAI answer I found in response to your question:\n\n {ai_answer} \n\n I am however just a bot. If your question was not answered satisfactorily, please select the relevant box."
 
-    say({'text': "Hi there! This is the OpenAI answer I found in response to your question:\n\n" + message_text + '\n\n I am however just a bot. If your question was not answered satisfactorily, please select the relevant box.',
+    say({'text': answer_text,
          "thread_ts": thread_id})
         # Send a message with buttons asking for feedback
     say(
@@ -63,6 +69,7 @@ def event_test(event, say):
                                 "text": {"type": "plain_text", "text": "This has resolved my query"},
                                 "value": "yes",
                                 'action_id': 'resolved_button',
+                                # Trying to add the thread ID as metadata on the button, in order for further extraction. 
                                 # "thread_ts": thread_id
                             },
                             {
@@ -121,8 +128,10 @@ def handle_negative_action(ack, body, client, logger):
 @app.action("resolved_button")
 def handle_positive_action(ack, body, say, logger):
     ack()
-    say({"thread_ts": thread_id, 'text':'Thank you for using the powerful app service! If you have any further feedback on this service, please leave it as a reply to this thread. Our team will review all feedback to improve the service.'})
+    text = 'Thank you for using the powerful app service! If you have any further feedback on this service, please leave it as a reply to this thread. Our team will review all feedback to improve the service.'
+    # TODO: As above, so below, extract the thread_id without relying on a global variable ideally. 
+    say({"thread_ts": thread_id, 'text': text})
     logger.info(body)    
 
 if __name__ == "__main__":
-    SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
+    SocketModeHandler(app, powerfulappappsecret).start()
