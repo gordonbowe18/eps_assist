@@ -21,12 +21,80 @@ powerfulappbotsecret = powerfulappbotsecret.value
 
 app = App(token=powerfulappbotsecret)
 
+model = AzureChatOpenAI(
+    openai_api_version="2023-08-01-preview",
+    azure_deployment="eps-assistant-model",
+    azure_endpoint = 'https://openapi-platforms-epsassist-poc-instance-uksouth.openai.azure.com/'
+    )
+
+conversation_sum = ConversationChain(
+llm=model,
+memory=ConversationSummaryMemory(llm=model)
+    )
+def convo_chain(chain, query):
+    with get_openai_callback() as cb:
+        result = chain.run(query)
+        print(f'Spent a total of {cb.total_tokens} tokens')
+    return result
+
+
+@app.message("Dear OpenAI bot")
+def message_hello(message, say):
+    print (message)
+    say ({"text": 'Thanks for your message! Here is what I found.',
+          "thread_ts": message['thread_ts']})
+    new_question = message['text']
+    new_question = new_question[15:]
+    global ai_answer
+    ai_answer = convo_chain(
+        conversation_sum,
+        new_question
+    )
+    say ({"text": ai_answer,
+          "thread_ts": message['thread_ts']}) 
+    
+    say(
+            {"thread_ts": thread_id,
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "Please select an option for how satisfied you are with the provided answer:",
+                        },
+                    },
+                    {
+                        "type": "actions",
+                        "elements": [
+                            {
+                                "type": "button",
+                                "text": {"type": "plain_text", "text": "This has resolved my query"},
+                                "value": "yes",
+                                'action_id': 'resolved_button',
+                                # Trying to add the thread ID as metadata on the button, in order for further extraction. 
+                                # "thread_ts": thread_id
+                            },
+                            {
+                                "type": "button",
+                                "text": {"type": "plain_text", "text": "This has not resolved my query"},
+                                "value": "no",
+                                'action_id': 'unresolved_button',
+                                # "thread_ts": thread_id
+                            },
+                        ],
+                    },
+                ]
+            }, 
+            
+        )    
+
 @app.event("message")
 def handle_message_events(body, logger):
     logger.info
 
 @app.event("app_mention")
-def event_test(event, say):
+def kick_off_event(event, say):
+    print (event)
     message_text = event["text"]
     # At the moment, I'm having to call this as a global variable. This needs changing for the 'handle_positive_action' function, I have so far been unable to pass the thread_id to respond on any other way, and cannot find a thread_id in the Ack object that triggers the positive action.
     global thread_id 
@@ -38,23 +106,9 @@ def event_test(event, say):
 
     # Call to openAI. Will need to be updated once the deployed model is available, as it currently facing a generic openAI conversation
     # TODO: Add in ConversationChain library to maintain context/ask further Qs. Will need an if else loop looking at the thread_id, again will need to extract thread_id somehow, may add in buttons to continue the conversation, then to go to feedback.
-    model = AzureChatOpenAI(
-        openai_api_version="2023-08-01-preview",
-        azure_deployment="eps-assistant-model",
-        azure_endpoint = 'https://openapi-platforms-epsassist-poc-instance-uksouth.openai.azure.com/'
-    )
 
-    conversation_sum = ConversationChain(
-	llm=model,
-	memory=ConversationSummaryMemory(llm=model)
-    )
-    def count_tokens(chain, query):
-        with get_openai_callback() as cb:
-            result = chain.run(query)
-            print(f'Spent a total of {cb.total_tokens} tokens')
-        return result
-
-    ai_answer = count_tokens(
+    global ai_answer
+    ai_answer = convo_chain(
         conversation_sum,
         message_text
     )
@@ -102,39 +156,46 @@ def event_test(event, say):
 # Handle button clicks
 
 @app.action("unresolved_button")
-def handle_negative_action(ack, body, client, logger):
+def handle_negative_action(ack, body, client, logger, say):
     ack()
-    url = 'https://www.servicenow.com/uk/'
+    say ({"text": "Sorry to hear your answer was not resolved. If you wish to ask any further questions, please do so in this thread. Please start all conversations with 'Dear OpenAI bot,'. Otherwise I cannot pick up the message. Context from previous questions will be maintained, so for an example you could ask 'Dear OpenAI bot, name three UK bird species'.",
+        "thread_ts": thread_id})
+    
+    say ({'text' : "Otherwise, if your question is still not answered, you can raise a support request here:",
+         'thread_ts': thread_id})
+
+
+
         # Ask for feedback
-    client.views_open(
-        trigger_id = body['trigger_id'],
+    # client.views_open(
+    #     trigger_id = body['trigger_id'],
  
-        view={
-            "type": "modal",
-            "callback_id": "external_modal",
-            "title": {
-                "type": "plain_text",
-                "text": "Raise a support ticket"
-            },
-            "blocks": [
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"Please follow this link to raise a support ticket for your issue: {url}"
-                    },
-                    "accessory": {
-                        "type": "button",
-                        "text": {
-                            "type": "plain_text",
-                            "text": "Raise a support ticket",
-                        },
-                        "url": url
-                    }
-                }
-            ]
-        }
-    )
+    #     view={
+    #         "type": "modal",
+    #         "callback_id": "external_modal",
+    #         "title": {
+    #             "type": "plain_text",
+    #             "text": "Raise a support ticket"
+    #         },
+    #         "blocks": [
+    #             {
+    #                 "type": "section",
+    #                 "text": {
+    #                     "type": "mrkdwn",
+    #                     "text": f"Please follow this link to raise a support ticket for your issue: {url}"
+    #                 },
+    #                 "accessory": {
+    #                     "type": "button",
+    #                     "text": {
+    #                         "type": "plain_text",
+    #                         "text": "Raise a support ticket",
+    #                     },
+    #                     "url": url
+    #                 }
+    #             }
+    #         ]
+    #     }
+    # )
     logger.info(body)    
 
 @app.action("resolved_button")
