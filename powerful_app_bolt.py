@@ -1,10 +1,11 @@
-import os
 from azure.keyvault.secrets import SecretClient
 from azure.identity import DefaultAzureCredential
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import AzureChatOpenAI
+from langchain.chains import ConversationChain
+from langchain.chains.conversation.memory import ConversationSummaryMemory
+from langchain_community.callbacks import get_openai_callback
 
 # Initializes your app with your bot token and socket mode handler
 keyVaultName = 'powerfulappkeyvault'
@@ -42,10 +43,21 @@ def event_test(event, say):
         azure_deployment="eps-assistant-model",
         azure_endpoint = 'https://openapi-platforms-epsassist-poc-instance-uksouth.openai.azure.com/'
     )
-    message = HumanMessage(
-        content=message_text
+
+    conversation_sum = ConversationChain(
+	llm=model,
+	memory=ConversationSummaryMemory(llm=model)
     )
-    ai_answer = ((model([message])).content)
+    def count_tokens(chain, query):
+        with get_openai_callback() as cb:
+            result = chain.run(query)
+            print(f'Spent a total of {cb.total_tokens} tokens')
+        return result
+
+    ai_answer = count_tokens(
+        conversation_sum,
+        message_text
+    )
     answer_text = f"Hi there! This is the OpenAI answer I found in response to your question:\n\n {ai_answer} \n\n I am however just a bot. If your question was not answered satisfactorily, please select the relevant box."
 
     say({'text': answer_text,
