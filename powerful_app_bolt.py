@@ -6,6 +6,9 @@ from langchain_openai import AzureChatOpenAI
 from langchain.chains import ConversationChain
 from langchain.chains.conversation.memory import ConversationSummaryMemory
 from langchain_community.callbacks import get_openai_callback
+import random
+from datetime import date
+
 
 # Initializes your app with your bot token and socket mode handler
 keyVaultName = 'powerfulappkeyvault'
@@ -19,6 +22,8 @@ powerfulappappsecret = powerfulappappsecret.value
 powerfulappbotsecret = client.get_secret('powerfulappbotsecret')
 powerfulappbotsecret = powerfulappbotsecret.value
 
+nested_dict = {}
+
 app = App(token=powerfulappbotsecret)
 
 model = AzureChatOpenAI(
@@ -30,6 +35,7 @@ model = AzureChatOpenAI(
 conversation_sum = ConversationChain(
 llm=model,
 memory=ConversationSummaryMemory(llm=model)
+
     )
 def convo_chain(chain, query):
     with get_openai_callback() as cb:
@@ -38,23 +44,25 @@ def convo_chain(chain, query):
     return result
 
 
-@app.message("Dear OpenAI bot")
+@app.message("Conversation ID #")
 def message_hello(message, say):
-    print (message)
-    say ({"text": 'Thanks for your message! Here is what I found.',
-          "thread_ts": message['thread_ts']})
     new_question = message['text']
-    new_question = new_question[15:]
-    global ai_answer
+    question_text = new_question[26:]
+    conversation_id = int(new_question[17:][:9])
+    say ({"text": 'Thanks for your message! I will go and retreive an answer',
+          "thread_ts": nested_dict[conversation_id]['conversation_thread_id']})
+
     ai_answer = convo_chain(
-        conversation_sum,
-        new_question
+        nested_dict[conversation_id]['conversation_history'],
+        question_text
     )
+    print (conversation_sum)
     say ({"text": ai_answer,
-          "thread_ts": message['thread_ts']}) 
-    
+          "thread_ts": nested_dict[conversation_id]['conversation_thread_id']}) 
+    nested_dict[conversation_id]['conversation_history'] = conversation_sum
+    conversation_sum.memory.clear()
     say(
-            {"thread_ts": thread_id,
+            {"thread_ts": nested_dict[conversation_id]['conversation_thread_id'],
                 "blocks": [
                     {
                         "type": "section",
@@ -96,24 +104,29 @@ def handle_message_events(body, logger):
 def kick_off_event(event, say):
     print (event)
     message_text = event["text"]
-    # At the moment, I'm having to call this as a global variable. This needs changing for the 'handle_positive_action' function, I have so far been unable to pass the thread_id to respond on any other way, and cannot find a thread_id in the Ack object that triggers the positive action.
-    global thread_id 
     thread_id = event.get("ts")
-    # Change to the relevant way we want to handle failed calls. 
+    convo_id = (random.randint(100000000, 999999999))
+    say ({"text": 'Hi there! Your conversation ID is ' + str(convo_id),
+          "thread_ts": thread_id})
     awaiting_text = "Thank you for your query. I will now go and retrieve your answer, this can take up to 3 minutes to complete. If your answer is not provided in this time, please raise a support request using the following link: https://www.servicenow.com/uk/"
     say ({"text": awaiting_text,
           "thread_ts": thread_id})
 
     # Call to openAI. Will need to be updated once the deployed model is available, as it currently facing a generic openAI conversation
     # TODO: Add in ConversationChain library to maintain context/ask further Qs. Will need an if else loop looking at the thread_id, again will need to extract thread_id somehow, may add in buttons to continue the conversation, then to go to feedback.
-
-    global ai_answer
     ai_answer = convo_chain(
         conversation_sum,
         message_text
     )
-    answer_text = f"Hi there! This is the OpenAI answer I found in response to your question:\n\n {ai_answer} \n\n I am however just a bot. If your question was not answered satisfactorily, please select the relevant box."
+    # Update to dicts to add conversation history, thread_ID to post into, and the date when the conversation was last updated
 
+    nested_dict[convo_id] = {
+            'conversation_history': conversation_sum,
+            'conversation_thread_id': thread_id,
+            'conversation_last_updated_date': date.today()
+        }
+    answer_text = f"Hi there! This is the OpenAI answer I found in response to your question:\n\n {ai_answer} \n\n I am however just a bot. If your question was not answered satisfactorily, please select the relevant box."
+    conversation_sum.memory.clear()
     say({'text': answer_text,
          "thread_ts": thread_id})
         # Send a message with buttons asking for feedback
@@ -134,16 +147,13 @@ def kick_off_event(event, say):
                                 "type": "button",
                                 "text": {"type": "plain_text", "text": "This has resolved my query"},
                                 "value": "yes",
-                                'action_id': 'resolved_button',
-                                # Trying to add the thread ID as metadata on the button, in order for further extraction. 
-                                # "thread_ts": thread_id
+                                'action_id': 'resolved_button'
                             },
                             {
                                 "type": "button",
                                 "text": {"type": "plain_text", "text": "This has not resolved my query"},
                                 "value": "no",
-                                'action_id': 'unresolved_button',
-                                # "thread_ts": thread_id
+                                'action_id': 'unresolved_button'
                             },
                         ],
                     },
@@ -158,13 +168,12 @@ def kick_off_event(event, say):
 @app.action("unresolved_button")
 def handle_negative_action(ack, body, client, logger, say):
     ack()
-    say ({"text": "Sorry to hear your answer was not resolved. If you wish to ask any further questions, please do so in this thread. Please start all conversations with 'Dear OpenAI bot,'. Otherwise I cannot pick up the message. Context from previous questions will be maintained, so for an example you could ask 'Dear OpenAI bot, name three UK bird species'.",
-        "thread_ts": thread_id})
+    thread_id = (body['container']['thread_ts'])
+    say ({"text": "Sorry to hear your answer was not resolved. If you wish to ask any further questions, please do so in this thread. Please start all conversations with 'Conversation ID #xxx'. Otherwise I cannot pick up the message. Context from previous questions will be maintained, so for an example you could ask 'Conversation ID #123, name three UK bird species'.",
+          "thread_ts": thread_id})
     
     say ({'text' : "Otherwise, if your question is still not answered, you can raise a support request here:",
-         'thread_ts': thread_id})
-
-
+          "thread_ts": thread_id})
 
         # Ask for feedback
     # client.views_open(
@@ -201,8 +210,8 @@ def handle_negative_action(ack, body, client, logger, say):
 @app.action("resolved_button")
 def handle_positive_action(ack, body, say, logger):
     ack()
+    thread_id = (body['container']['thread_ts'])
     text = 'Thank you for using the powerful app service! If you have any further feedback on this service, please leave it as a reply to this thread. Our team will review all feedback to improve the service.'
-    # TODO: As above, so below, extract the thread_id without relying on a global variable ideally. 
     say({"thread_ts": thread_id, 'text': text})
     logger.info(body)    
 
