@@ -52,11 +52,11 @@ def message_hello(message, say):
     say ({"text": 'Thanks for your message! I will go and retreive an answer',
           "thread_ts": nested_dict[conversation_id]['conversation_thread_id']})
 
+    conversation_sum = nested_dict[conversation_id]['conversation_history']
     ai_answer = convo_chain(
-        nested_dict[conversation_id]['conversation_history'],
+        conversation_sum,
         question_text
     )
-    print (conversation_sum)
     say ({"text": ai_answer,
           "thread_ts": nested_dict[conversation_id]['conversation_thread_id']}) 
     nested_dict[conversation_id]['conversation_history'] = conversation_sum
@@ -120,11 +120,14 @@ def kick_off_event(event, say):
     )
     # Update to dicts to add conversation history, thread_ID to post into, and the date when the conversation was last updated
 
+    print (conversation_sum)
     nested_dict[convo_id] = {
             'conversation_history': conversation_sum,
             'conversation_thread_id': thread_id,
             'conversation_last_updated_date': date.today()
         }
+    
+    print (nested_dict)
     answer_text = f"Hi there! This is the OpenAI answer I found in response to your question:\n\n {ai_answer} \n\n I am however just a bot. If your question was not answered satisfactorily, please select the relevant box."
     conversation_sum.memory.clear()
     say({'text': answer_text,
