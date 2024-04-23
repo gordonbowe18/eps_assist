@@ -3,9 +3,7 @@ from azure.identity import DefaultAzureCredential
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from langchain_openai import AzureChatOpenAI
-from langchain.chains import ConversationChain
-from langchain.chains.conversation.memory import ConversationSummaryMemory
-from langchain_community.callbacks import get_openai_callback
+from langchain.memory import ChatMessageHistory
 import random
 from datetime import date
 
@@ -14,125 +12,64 @@ from datetime import date
 keyVaultName = 'powerfulappkeyvault'
 KVUri = f"https://{keyVaultName}.vault.azure.net"
 
+# Handle credentials
 credential = DefaultAzureCredential()
 client = SecretClient(vault_url=KVUri, credential=credential)
+
+# Grab the API keys
 powerfulappappsecret = client.get_secret('powerfulappappsecret')
 powerfulappappsecret = powerfulappappsecret.value
-
 powerfulappbotsecret = client.get_secret('powerfulappbotsecret')
 powerfulappbotsecret = powerfulappbotsecret.value
 
+# Set up the dict we will store the records in
 nested_dict = {}
 
 app = App(token=powerfulappbotsecret)
 
+# Model needs to be updated once the endpoint is deployed with training data
 model = AzureChatOpenAI(
     openai_api_version="2023-08-01-preview",
     azure_deployment="eps-assistant-model",
     azure_endpoint = 'https://openapi-platforms-epsassist-poc-instance-uksouth.openai.azure.com/'
     )
 
-conversation_sum = ConversationChain(
-llm=model,
-memory=ConversationSummaryMemory(llm=model)
-
-    )
-def convo_chain(chain, query):
-    with get_openai_callback() as cb:
-        result = chain.run(query)
-        print(f'Spent a total of {cb.total_tokens} tokens')
-    return result
-
-
-@app.message("Conversation ID #")
-def message_hello(message, say):
-    new_question = message['text']
-    question_text = new_question[26:]
-    conversation_id = int(new_question[17:][:9])
-    say ({"text": 'Thanks for your message! I will go and retreive an answer',
-          "thread_ts": nested_dict[conversation_id]['conversation_thread_id']})
-
-    conversation_sum = nested_dict[conversation_id]['conversation_history']
-    ai_answer = convo_chain(
-        conversation_sum,
-        question_text
-    )
-    say ({"text": ai_answer,
-          "thread_ts": nested_dict[conversation_id]['conversation_thread_id']}) 
-    nested_dict[conversation_id]['conversation_history'] = conversation_sum
-    conversation_sum.memory.clear()
-    say(
-            {"thread_ts": nested_dict[conversation_id]['conversation_thread_id'],
-                "blocks": [
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": "Please select an option for how satisfied you are with the provided answer:",
-                        },
-                    },
-                    {
-                        "type": "actions",
-                        "elements": [
-                            {
-                                "type": "button",
-                                "text": {"type": "plain_text", "text": "This has resolved my query"},
-                                "value": "yes",
-                                'action_id': 'resolved_button',
-                                # Trying to add the thread ID as metadata on the button, in order for further extraction. 
-                                # "thread_ts": thread_id
-                            },
-                            {
-                                "type": "button",
-                                "text": {"type": "plain_text", "text": "This has not resolved my query"},
-                                "value": "no",
-                                'action_id': 'unresolved_button',
-                                # "thread_ts": thread_id
-                            },
-                        ],
-                    },
-                ]
-            }, 
-            
-        )    
-
-@app.event("message")
-def handle_message_events(body, logger):
-    logger.info
-
+# When a user @ mentions the app. The start to add a new question/record to the dict.
 @app.event("app_mention")
 def kick_off_event(event, say):
-    print (event)
+    # Extract the actual question
     message_text = event["text"]
+    # Extract the thread_id so that we can keep the context of the query. 
     thread_id = event.get("ts")
+    # Assign a conversation ID. Do a little while loop to generate a new number if the ID already exists. 
     convo_id = (random.randint(100000000, 999999999))
+    while convo_id in nested_dict:
+        convo_id = (random.randint(100000000, 999999999))
+    # Tell them the conversation ID
     say ({"text": 'Hi there! Your conversation ID is ' + str(convo_id),
           "thread_ts": thread_id})
+    # Say we're going to grab the answer. This time can be extended as needed, also need to add in how we want to handle failed calls. 
     awaiting_text = "Thank you for your query. I will now go and retrieve your answer, this can take up to 3 minutes to complete. If your answer is not provided in this time, please raise a support request using the following link: https://www.servicenow.com/uk/"
     say ({"text": awaiting_text,
           "thread_ts": thread_id})
 
-    # Call to openAI. Will need to be updated once the deployed model is available, as it currently facing a generic openAI conversation
-    # TODO: Add in ConversationChain library to maintain context/ask further Qs. Will need an if else loop looking at the thread_id, again will need to extract thread_id somehow, may add in buttons to continue the conversation, then to go to feedback.
-    ai_answer = convo_chain(
-        conversation_sum,
-        message_text
-    )
-    # Update to dicts to add conversation history, thread_ID to post into, and the date when the conversation was last updated
+    # Create the conversation history 
+    history = ChatMessageHistory()
+    history.add_user_message(message_text)
+    ai_answer = (model(history.messages).content)
+    history.add_ai_message(ai_answer)
 
-    print (conversation_sum)
+    # Update to dicts to add conversation history, thread_ID to post into, and the date when the conversation was last updated
     nested_dict[convo_id] = {
-            'conversation_history': conversation_sum,
+            'conversation_history': history,
             'conversation_thread_id': thread_id,
             'conversation_last_updated_date': date.today()
         }
-    
-    print (nested_dict)
+    # Push the answer back to the user.
     answer_text = f"Hi there! This is the OpenAI answer I found in response to your question:\n\n {ai_answer} \n\n I am however just a bot. If your question was not answered satisfactorily, please select the relevant box."
-    conversation_sum.memory.clear()
     say({'text': answer_text,
          "thread_ts": thread_id})
-        # Send a message with buttons asking for feedback
+    # Send a message with buttons asking for feedback
     say(
             {"thread_ts": thread_id,
                 "blocks": [
@@ -168,6 +105,59 @@ def kick_off_event(event, say):
 
 # Handle button clicks
 
+@app.message("Conversation ID #")
+def message_hello(message, say):
+    new_question = message['text']
+    question_text = new_question[26:]
+    # Extract the conversation id to be passed to the dict.
+    conversation_id = int(new_question[17:][:9])
+    say ({"text": 'Thanks for your message! I will go and retreive an answer',
+          "thread_ts": nested_dict[conversation_id]['conversation_thread_id']})
+    history = ChatMessageHistory()
+    # Add history of the conversation we want to work with. 
+    history.add_ai_message(str(nested_dict[conversation_id]['conversation_history']))
+    history.add_user_message(question_text)
+    ai_answer = (model(history.messages).content)
+    say ({"text": ai_answer,
+          "thread_ts": nested_dict[conversation_id]['conversation_thread_id']}) 
+    
+    # Update dict for latest history, and the most recent updated date. 
+    nested_dict[conversation_id]['conversation_history'] = history
+    nested_dict[conversation_id]['conversation_last_updated_date'] = date.today()
+
+    say(
+            {"thread_ts": nested_dict[conversation_id]['conversation_thread_id'],
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "Please select an option for how satisfied you are with the provided answer:",
+                        },
+                    },
+                    {
+                        "type": "actions",
+                        "elements": [
+                            {
+                                "type": "button",
+                                "text": {"type": "plain_text", "text": "This has resolved my query"},
+                                "value": "yes",
+                                'action_id': 'resolved_button',
+                            },
+                            {
+                                "type": "button",
+                                "text": {"type": "plain_text", "text": "This has not resolved my query"},
+                                "value": "no",
+                                'action_id': 'unresolved_button',
+                            },
+                        ],
+                    },
+                ]
+            }, 
+            
+        )    
+
+
 @app.action("unresolved_button")
 def handle_negative_action(ack, body, client, logger, say):
     ack()
@@ -178,6 +168,8 @@ def handle_negative_action(ack, body, client, logger, say):
     say ({'text' : "Otherwise, if your question is still not answered, you can raise a support request here:",
           "thread_ts": thread_id})
 
+
+    # Leaving these in in case we want them. Opens a new dialogue box which gives a URL to open, in case this is needed. 
         # Ask for feedback
     # client.views_open(
     #     trigger_id = body['trigger_id'],
