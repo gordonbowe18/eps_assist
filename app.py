@@ -1,31 +1,19 @@
-from azure.keyvault.secrets import SecretClient
-from azure.identity import DefaultAzureCredential
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from langchain_openai import AzureChatOpenAI
 from langchain.memory import ChatMessageHistory
 import random
+import os
 from datetime import date
 
-
-# Initializes your app with your bot token and socket mode handler
-keyVaultName = "powerfulappkeyvault"
-KVUri = f"https://{keyVaultName}.vault.azure.net"
-
-# Handle credentials
-credential = DefaultAzureCredential()
-client = SecretClient(vault_url=KVUri, credential=credential)
-
 # Grab the API keys
-powerfulappappsecret = client.get_secret("powerfulappappsecret")
-powerfulappappsecret = powerfulappappsecret.value
-powerfulappbotsecret = client.get_secret("powerfulappbotsecret")
-powerfulappbotsecret = powerfulappbotsecret.value
+bot_token = os.environ["SLACK_BOT_TOKEN"]
+app_token = os.environ["SLACK_APP_TOKEN"]
 
 # Set up the dict we will store the records in
 nested_dict = {}
 
-app = App(token=powerfulappbotsecret)
+app = App(token=bot_token)
 
 # Model needs to be updated once the endpoint is deployed with training data
 model = AzureChatOpenAI(
@@ -50,7 +38,6 @@ def kick_off_event(event, say):
     while convo_id in nested_dict:
         convo_id = random.randint(100000000, 999999999)
     # Tell them the conversation ID
-    convo_id = convo_id
     convo_id_text = f"Hi there! Your conversation ID is {convo_id}"
     say({"text": convo_id_text, "thread_ts": thread_id})
     # Say we're going to grab the answer. This time can be extended as needed, also need to add in how we want to handle failed calls.
@@ -80,7 +67,7 @@ def kick_off_event(event, say):
                 {
                     "type": "section",
                     "text": {
-                        "type": "mrkdwn",
+                        "type": "markdwn",
                         "text": "Please select an option for how satisfied you are with the provided answer:",
                     },
                 },
@@ -257,4 +244,4 @@ def handle_positive_action(ack, body, say, logger):
 
 
 if __name__ == "__main__":
-    SocketModeHandler(app, powerfulappappsecret).start()
+    SocketModeHandler(app, app_token).start()
