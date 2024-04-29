@@ -3,3 +3,5 @@ Hello!
 
 
 ooh, let's see if this work :p 
+
+How about now that the gitignore is updated? 

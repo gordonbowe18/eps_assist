@@ -188,6 +188,7 @@ def message_hello(message, client, say):
             ],
         },
     )
+    print ('hello')
 
 
 @app.action("unresolved_button")
