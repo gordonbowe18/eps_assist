@@ -5,6 +5,7 @@ from langchain.memory import ChatMessageHistory
 import random
 import os
 from datetime import date
+from typing import TypedDict
 
 # Grab the API keys
 bot_token = os.environ["SLACK_BOT_TOKEN"]
@@ -14,6 +15,13 @@ app_token = os.environ["SLACK_APP_TOKEN"]
 nested_dict = {}
 
 app = App(token=bot_token)
+
+class Item (TypedDict):
+    type: str
+class Event (TypedDict):
+    type : str
+    user : str
+    item : Item
 
 # Model needs to be updated once the endpoint is deployed with training data
 model = AzureChatOpenAI(
